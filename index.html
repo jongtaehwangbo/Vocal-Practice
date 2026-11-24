@@ -101,6 +101,7 @@ summary{color:var(--acc);font-size:14px;padding:6px 0}
       <select id="artSel"><option value="0.95">레가토 (이어서)</option><option value="0.45">스타카토 (끊어서)</option></select></div>
     <div data-k="chord harm3"><label>가이드</label>
       <select id="guideSel"><option value="1">켜기 (내 파트도 피아노가)</option><option value="0">끄기 (혼자 찾아 부르기)</option></select></div>
+    <div class="full"><label>🔊 피아노 볼륨 <b id="volVal">200</b>%</label><input id="vol" type="range" min="50" max="300" step="10" value="200"></div>
     <div class="full" data-k="pattern chord glide stack harm3 echo rhythm stacc"><label>템포 <b id="bpmVal">80</b> BPM</label>
       <input id="bpm" type="range" min="50" max="140" value="80"></div>
   </div>
@@ -297,9 +298,11 @@ function buildSession(c,rand){
   const offs=roundOffsets(c.rounds,c.dir||'up');
   if(kind==='pattern'||kind==='chord'){
     const steps=kind==='chord'?chordSteps(CHORDS[e.chord].iv):e.steps;
+    const minor=kind==='pattern'&&steps.includes(3)&&!steps.includes(4);
     offs.forEach((off,r)=>{
       const base=c.start+off,st=t,ns=[];
       if(kind==='chord')t+=beat*2;
+      else{ns.push(N({midi:base,chordCue:[base-12,base,base+(minor?3:4),base+7],start:t,dur:beat,sound:beat*0.9,score:false,cue:true,ghost:true,round:r}));t+=beat*1.25}
       steps.forEach((s,i)=>{
         const last=i===steps.length-1,dur=(last?(len<0.5?4:2):1)*len*beat;
         const sound=Math.min(dur*0.95,Math.max(0.2,dur*(kind==='pattern'?art:0.95)));
@@ -307,13 +310,14 @@ function buildSession(c,rand){
       });
       rounds.push({base,start:st,end:t,notes:ns,chord:kind==='chord'?CHORDS[e.chord].iv.map(x=>base+x):null,
         label:kind==='chord'?pcName(base)+CHORDS[e.chord].sym:noteName(base)});
-      t+=beat*1.5;
+      t+=kind==='chord'?beat*1.5:beat;
     });
   }else if(kind==='glide'){
     offs.forEach((off,r)=>{
       const base=c.start+off,st=t,ns=[];
+      ns.push(N({midi:base,chordCue:[base-12,base,base+4,base+7],start:t,dur:beat,sound:beat*0.9,score:false,cue:true,ghost:true,round:r}));t+=beat*1.25;
       e.glides.forEach(([a,b])=>{const dur=e.gb*beat;ns.push(N({midi:base+a,to:base+b,start:t,dur,lead:0.3,round:r,syl:e.syl,tol:100}));t+=dur});
-      rounds.push({base,start:st,end:t,notes:ns,label:noteName(base)});t+=beat*1.5;
+      rounds.push({base,start:st,end:t,notes:ns,label:noteName(base)});t+=beat;
     });
   }else if(kind==='echo'){
     let prev=-1;
@@ -490,7 +494,7 @@ let queue=null,gapTimer=0,gapLeft=0,env=null,ls=null,wu=null,quiz=null,quizTimer
   const s=$('keySel');
   for(let m=40;m<=72;m++){const o=new Option(noteName(m),m);if(m===55)o.selected=true;s.appendChild(o)}
 })();
-const FORM=['exSel','keyMode','keySel','roundSel','dirSel','lenSel','artSel','guideSel','bpm'];
+const FORM=['vol','exSel','keyMode','keySel','roundSel','dirSel','lenSel','artSel','guideSel','bpm'];
 function saveForm(){const f={};FORM.forEach(id=>f[id]=$(id).value);LS.set('vt_form',f)}
 function loadForm(){
   const f=LS.get('vt_form',null);
@@ -504,6 +508,8 @@ function curKind(){return EX[$('exSel').value].kind}
 function syncForm(){
   const e=EX[$('exSel').value],k=e.kind;
   $('bpmVal').textContent=$('bpm').value;
+  $('volVal').textContent=$('vol').value;
+  if(master&&ctx)try{master.gain.setTargetAtTime(volGain(),ctx.currentTime,0.05)}catch(e){}
   document.querySelectorAll('#tab-train [data-k]').forEach(el=>el.classList.toggle('hide',!el.dataset.k.split(' ').includes(k)));
   $('exDesc').textContent=e.desc||'';
   $('keyLbl').textContent=k==='warmup'?'립트릴·허밍 기준음':k==='quiz'?'출제 음역 (여기서부터 위로)':k==='echo'?'음역 시작음 (여기서 한 옥타브 안에서 출제)':k==='harm3'?'조 (멜로디 시작음)':k==='stack'?'화음 근음':'시작음 (피아노)';
@@ -580,7 +586,17 @@ async function ensureAudio(needMic){
   }
   newMaster();
 }
-function newMaster(){if(master)try{master.disconnect()}catch(e){}master=ctx.createGain();master.gain.value=0.55;master.connect(ctx.destination)}
+let comp=null;
+function volGain(){return 0.55*(+$('vol').value/100)}
+function newMaster(){
+  if(master)try{master.disconnect()}catch(e){}
+  if(!comp&&ctx.createDynamicsCompressor){
+    comp=ctx.createDynamicsCompressor();
+    try{comp.threshold.value=-14;comp.knee.value=8;comp.ratio.value=8;comp.attack.value=0.003;comp.release.value=0.2}catch(e){}
+    comp.connect(ctx.destination);
+  }
+  master=ctx.createGain();master.gain.value=volGain();master.connect(comp||ctx.destination);
+}
 function playPiano(freq,t,dur,vol){
   vol=vol||1;
   const gn=ctx.createGain();gn.connect(master);
@@ -713,6 +729,7 @@ async function startItem(){
     sess.rounds.forEach(r=>{if(r.chord)playPad(r.chord.map(m=>m-12),t0+r.start,r.end-r.start)});
     sess.notes.forEach(n=>{
       if(!n.play)return;
+      if(n.chordCue){n.chordCue.forEach((m,j)=>playPiano(midiToHz(m),t0+n.start,n.sound,j===0?0.7:0.85));return}
       if(n.to!=null)playGlide(midiToHz(n.midi),midiToHz(n.to),t0+n.start,n.sound);
       else if(n.pad)playPad([n.midi],t0+n.start,n.sound);
       else playPiano(midiToHz(n.midi),t0+n.start,n.sound*0.95,n.soft?0.45:1);
