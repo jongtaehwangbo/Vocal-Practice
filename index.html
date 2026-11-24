@@ -88,7 +88,9 @@ summary{color:var(--acc);font-size:14px;padding:6px 0}
 <section id="tab-train" class="card">
   <div class="grid">
     <div class="full"><label>운동</label><select id="exSel"></select><div class="hint" id="exDesc"></div></div>
-    <div data-k="pattern chord glide stack harm3 echo warmup quiz"><label id="keyLbl">시작음 (피아노)</label><select id="keySel"></select></div>
+    <div data-k="pattern chord glide stack harm3 echo warmup"><label>키 정하기</label>
+      <select id="keyMode"><option value="auto">🎯 내 음역에 자동</option><option value="manual">직접 고르기</option></select></div>
+    <div data-k="pattern chord glide stack harm3 echo warmup quiz"><label id="keyLbl">시작음 (피아노)</label><select id="keySel"></select><div id="autoKeyTxt" class="hint" style="margin-top:4px"></div></div>
     <div data-k="pattern chord glide stack harm3 echo rhythm stacc quiz"><label id="roundLbl">반복 횟수</label>
       <select id="roundSel"><option>3</option><option>4</option><option selected>5</option><option>6</option><option>8</option><option>10</option></select></div>
     <div data-k="pattern chord glide stack harm3"><label>반복할 때 키 이동</label>
@@ -111,14 +113,19 @@ summary{color:var(--acc);font-size:14px;padding:6px 0}
 <section id="tab-routine" class="card hide"><div id="routineBox"></div></section>
 
 <section id="tab-monitor" class="card hide">
+  <div class="card" style="background:#131a28;margin:0 0 12px">
+    <label>🎯 내 음역 (모든 운동의 키가 여기에 맞춰져요)</label>
+    <div id="myRangeTxt" style="font-size:20px;font-weight:800">아직 측정 안 함</div>
+    <button class="btn" id="rangeTestBtn">내 음역 측정하기 (20초)</button>
+    <div class="hint">낮은 음 10초 → 높은 음 10초. "아~"로 천천히 내려갔다가 올라가면 돼요. 가성도 괜찮아요.</div>
+  </div>
+  <label>자유 모니터</label>
   <div class="meter"><b></b><i id="needle"></i></div>
   <div class="row" style="margin-top:12px">
     <div><label>측정된 음역대</label><div id="rangeTxt" style="font-size:18px;font-weight:700">—</div></div>
     <button class="mini" id="rangeReset">초기화</button>
   </div>
   <button class="btn" id="startMon">마이크 켜기</button>
-  <button class="btn sub" id="setFromRange">이 음역에 맞게 시작음 설정</button>
-  <div class="ok-msg" id="rangeOk"></div>
   <div class="hint">아무 음이나 길게 내보세요. 한 음을 약 0.2초 이상 유지하면 최저·최고음에 기록돼요. 중지하면 오늘 음역대가 기록 탭에 저장돼요.</div>
 </section>
 
@@ -435,6 +442,21 @@ function estimateSec(items){
     return s+t+4;
   },0);
 }
+function fitStart(c,rg,ofs){
+  const e=EX[normEx(c)],k=e.kind;ofs=ofs||0;
+  if(k==='rhythm'||k==='stacc'||k==='longS')return c.start;
+  if(k==='warmup')return Math.round(rg.lo+(rg.hi-rg.lo)*0.3)+ofs;
+  if(k==='quiz')return rg.lo+3;
+  let mn=0,mx=12;
+  if(k!=='echo'){
+    const s=buildSession(Object.assign({},c,{start:0}),()=>0.5);
+    mn=Infinity;mx=-Infinity;
+    s.notes.forEach(n=>{if(n.score){mn=Math.min(mn,n.midi,n.to==null?n.midi:n.to);mx=Math.max(mx,n.midi,n.to==null?n.midi:n.to)}});
+  }
+  const a=rg.lo+2-mn,b=rg.hi-2-mx;
+  const st=a<=b?a:Math.round((a+b)/2);
+  return Math.max(33,Math.min(84,st+ofs));
+}
 function courseDays(){
   const days=[];
   WEEKS.forEach((w,wi)=>{for(let k=0;k<7;k++){
@@ -468,7 +490,7 @@ let queue=null,gapTimer=0,gapLeft=0,env=null,ls=null,wu=null,quiz=null,quizTimer
   const s=$('keySel');
   for(let m=40;m<=72;m++){const o=new Option(noteName(m),m);if(m===55)o.selected=true;s.appendChild(o)}
 })();
-const FORM=['exSel','keySel','roundSel','dirSel','lenSel','artSel','guideSel','bpm'];
+const FORM=['exSel','keyMode','keySel','roundSel','dirSel','lenSel','artSel','guideSel','bpm'];
 function saveForm(){const f={};FORM.forEach(id=>f[id]=$(id).value);LS.set('vt_form',f)}
 function loadForm(){
   const f=LS.get('vt_form',null);
@@ -487,6 +509,19 @@ function syncForm(){
   $('keyLbl').textContent=k==='warmup'?'립트릴·허밍 기준음':k==='quiz'?'출제 음역 (여기서부터 위로)':k==='echo'?'음역 시작음 (여기서 한 옥타브 안에서 출제)':k==='harm3'?'조 (멜로디 시작음)':k==='stack'?'화음 근음':'시작음 (피아노)';
   $('roundLbl').textContent=k==='echo'||k==='quiz'?'문제 수':k==='rhythm'?'리듬 개수':k==='stacc'?'마디 수':'반복 횟수';
   $('addDraft').disabled=k==='longS';
+  const rg=LS.get('vt_myrange',null),auto=$('keyMode').value==='auto'&&rg&&k!=='quiz';
+  $('keySel').classList.toggle('hide',!!auto);
+  if(auto){
+    const ofs=LS.get('vt_keyofs',0),st=fitStart(readForm(),rg,ofs);
+    $('keyLbl').textContent='시작음 (자동)';
+    $('autoKeyTxt').textContent=noteName(st)+'부터 · 내 음역 '+noteName(rg.lo)+'~'+noteName(rg.hi)+' 기준'+(ofs?' ('+(ofs>0?'+':'')+ofs+' 조정)':'');
+  }else $('autoKeyTxt').textContent=$('keyMode').value==='auto'&&!rg&&k!=='quiz'?'음정 모니터 탭에서 "내 음역 측정"을 하면 자동으로 맞춰져요. 지금은 위 음으로 시작해요.':'';
+}
+function myRange(){return LS.get('vt_myrange',null)}
+function effCfg(c){
+  const rg=myRange(),km=c.km||$('keyMode').value;
+  if(!rg||km!=='auto')return c;
+  return Object.assign({},c,{start:fitStart(c,rg,LS.get('vt_keyofs',0))});
 }
 $('exSel').addEventListener('change',()=>{
   const p=EX[$('exSel').value].preset;
@@ -497,7 +532,7 @@ FORM.forEach(id=>{$(id).addEventListener('input',()=>{syncForm();saveForm()});$(
 function getBase(){return +$('keySel').value}
 function setBase(m){m=Math.max(40,Math.min(72,m));$('keySel').value=m;saveForm();return m}
 function readForm(){
-  return {ex:$('exSel').value,start:getBase(),rounds:+$('roundSel').value,dir:$('dirSel').value,
+  return {ex:$('exSel').value,km:$('keyMode').value,start:getBase(),rounds:+$('roundSel').value,dir:$('dirSel').value,
     bpm:+$('bpm').value,len:+$('lenSel').value,art:+$('artSel').value,guide:$('guideSel').value==='1'};
 }
 function cfgDetail(c){
@@ -527,6 +562,7 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   if(curTab==='routine')renderRoutine();
   resetHud();drawIdle();
 });
+function d0(tab){const b=document.querySelector('.tabs button[data-tab="'+tab+'"]');if(b)b.click()}
 function msg(t){$('msg').textContent=t||''}
 function hud(a,b){$('hudNote').textContent=a;$('hudSub').textContent=b}
 function resetHud(){hud('—','마이크를 켜고 시작하세요');$('needle').style.left='50%'}
@@ -653,7 +689,7 @@ async function startItem(){
   if(!queue)return;
   saveResume();
   stopLoop();trail=[];hist=[];
-  const c=queue.items[queue.i],e=EX[normEx(c)];
+  const c=effCfg(queue.items[queue.i]),e=EX[normEx(c)];
   $('summary').classList.add('hide');
   if(e.kind==='warmup')return startWarmup(c,e);
   if(e.kind==='quiz')return startQuiz(c,e);
@@ -933,7 +969,11 @@ function renderSummary(more){
 $('summary').addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');if(!b)return;
   if(b.dataset.act==='skipGap'&&gapTimer){clearInterval(gapTimer);gapTimer=0;startItem()}
-  if(b.dataset.act==='applySg'){const m=setBase(getBase()+(+b.dataset.d));b.textContent='시작음을 '+noteName(m)+'로 바꿨어요';b.disabled=true}
+  if(b.dataset.act==='applySg'){
+    if(myRange()&&$('keyMode').value==='auto'){const o=Math.max(-5,Math.min(5,LS.get('vt_keyofs',0)+(+b.dataset.d)));LS.set('vt_keyofs',o);syncForm();b.textContent='다음부터 내 음역 기준 '+(o>0?'+':'')+o+'반음으로 맞출게요'}
+    else{const m=setBase(getBase()+(+b.dataset.d));b.textContent='시작음을 '+noteName(m)+'로 바꿨어요'}
+    b.disabled=true;
+  }
   if(b.dataset.act==='applyBpm'){const v=Math.max(50,Math.min(140,+$('bpm').value+(+b.dataset.d)));$('bpm').value=v;syncForm();saveForm();b.textContent='템포를 '+v+'로 바꿨어요';b.disabled=true}
 });
 
@@ -942,7 +982,8 @@ function renderRoutine(){
   const days=courseDays(),prog=LS.get('vt_course',{done:[]}),done=new Set(prog.done);
   const td=days.find(d=>!done.has(d.day));
   const di=dailyItems(dayNum()),doneToday=LS.get('vt_daily',[]).includes(today());
-  let h='<h3>⏱ 30분 데일리</h3>';
+  let h=myRange()?'':'<div class="drow today" data-act="goRange" style="margin-bottom:10px">🎯 <b>내 음역을 먼저 측정하세요</b><br><span class="mute">20초면 끝나요. 모든 운동이 내 목소리에 맞는 키로 나와요 → 눌러서 측정하러 가기</span></div>';
+  h+='<h3>⏱ 30분 데일리</h3>';
   h+='<div class="mute">약 '+Math.round(estimateSec(di)/60)+'분 · 운동 '+di.length+'개 · 매일 일부 운동이 바뀌어 5일이면 앱의 모든 운동을 한 번씩 해요</div>';
   h+='<button class="btn" data-act="daily">'+(doneToday?'✅ 오늘 완료 · 한 번 더 하기':'오늘의 30분 시작')+'</button>';
   h+='<details><summary>오늘 할 운동 보기</summary>';
@@ -982,6 +1023,7 @@ function renderRoutine(){
 $('routineBox').addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');if(!b)return;
   const a=b.dataset.act,i=+b.dataset.i;
+  if(a==='goRange'){d0('monitor');return}
   if(a==='daily'){
     const base=getBase();
     startRun(dailyItems(dayNum()).map(x=>Object.assign({},x,{start:base})),'30분 데일리',{t:'daily'});
@@ -1015,12 +1057,37 @@ $('startMon').onclick=async()=>{
   raf=requestAnimationFrame(frame);
 };
 $('rangeReset').onclick=()=>{rangeLo=rangeHi=null;updateRange()};
-$('setFromRange').onclick=()=>{
-  if(rangeLo==null){const r=LS.get('vt_range',[]);if(r.length){rangeLo=r[r.length-1].lo;rangeHi=r[r.length-1].hi;updateRange()}}
-  if(rangeLo==null){$('rangeOk').textContent='';msg('먼저 음역대를 측정해 주세요.');return}
-  msg('');const m=setBase(rangeLo+2);
-  $('rangeOk').textContent='시작음을 '+noteName(m)+'로 설정했어요 (최저음 '+noteName(rangeLo)+' + 온음).';
+let rt=null;
+$('rangeTestBtn').onclick=async()=>{
+  stopAll();msg('');
+  try{await ensureAudio()}catch(e){msg(e.message||'마이크 권한이 필요해요.');return}
+  trail=[];hist=[];
+  rt={t0:ctx.currentTime+1.5,lo:null,hi:null,st:{m:null,n:0}};
+  monT0=ctx.currentTime;mode='rangeTest';$('summary').classList.add('hide');setRunUI();
+  click(rt.t0,990,0.25);click(rt.t0+10,1320,0.25);click(rt.t0+20,1760,0.25);
+  raf=requestAnimationFrame(frame);
+  try{$('stageWrap').scrollIntoView({behavior:'smooth',block:'start'})}catch(_){}
 };
+function renderMyRange(){
+  const rg=myRange();
+  $('myRangeTxt').textContent=rg?noteName(rg.lo)+' ~ '+noteName(rg.hi)+'  ('+(rg.hi-rg.lo)+'반음) · '+rg.d.slice(5).replace('-','/')+' 측정':'아직 측정 안 함';
+  $('rangeTestBtn').textContent=rg?'다시 측정하기 (20초)':'내 음역 측정하기 (20초)';
+}
+function finishRangeTest(){
+  setRunUI();
+  const lo=rt.lo,hi=rt.hi;
+  if(lo==null||hi==null||hi-lo<5){
+    $('summary').innerHTML='<label>음역 측정</label><div class="big" style="font-size:24px">측정이 잘 안 됐어요</div><div class="hint">조용한 곳에서 마이크 가까이, "아~" 소리를 0.2초 이상 끌면서 천천히 움직여 주세요. 다시 측정해 보세요.</div>';
+    $('summary').classList.remove('hide');return;
+  }
+  LS.set('vt_myrange',{lo,hi,d:today()});LS.set('vt_keyofs',0);
+  rangeLo=lo;rangeHi=hi;saveRange();updateRange();renderMyRange();
+  $('keyMode').value='auto';saveForm();syncForm();
+  $('summary').innerHTML='<label>🎯 내 음역</label><div class="big">'+noteName(lo)+' ~ '+noteName(hi)+'</div>'+
+    '<div class="hint" style="font-size:14px;color:var(--txt)">'+(hi-lo)+'반음 · 편하게 연습할 구간은 '+noteName(lo+2)+' ~ '+noteName(hi-2)+'이에요.</div>'+
+    '<div class="hint">이제 모든 운동, 데일리, 4주 코스가 이 음역 안에서 나와요. 결과 화면에서 "올리기/내리기"를 누르면 반음씩 미세 조정돼요. 한 달에 한 번쯤 다시 측정해 보세요.</div>';
+  $('summary').classList.remove('hide');
+}
 function updateRange(){$('rangeTxt').textContent=rangeLo==null?'—':noteName(rangeLo)+' ~ '+noteName(rangeHi)+'  ('+(rangeHi-rangeLo)+'반음)'}
 function saveRange(){
   if(rangeLo==null)return;
@@ -1073,6 +1140,25 @@ function frame(){
     }
     drawPitch(now);
     if(now>sess.total+0.3){stopLoop();mode=null;finishPitch()}
+  }else if(mode==='rangeTest'){
+    const el=ctx.currentTime-rt.t0,now=ctx.currentTime-monT0;
+    if(midi!=null){
+      viewC+=(midi-viewC)*0.08;
+      const rm=Math.round(midi);
+      if(rt.st.m===rm)rt.st.n++;else rt.st={m:rm,n:1};
+      if(el>=0&&rt.st.n>=8&&Math.abs(midi-rm)<0.4&&rm>=33&&rm<=88){
+        if(rt.lo==null||rm<rt.lo)rt.lo=rm;
+        if(rt.hi==null||rm>rt.hi)rt.hi=rm;
+      }
+    }else rt.st={m:null,n:0};
+    const cur=midi!=null?noteName(midi):'—',got=rt.lo!=null?' · 지금까지 '+noteName(rt.lo)+'~'+noteName(rt.hi):'';
+    if(el<0)hud('준비','곧 시작해요. 편한 음으로 "아~" 준비');
+    else if(el<10)hud(cur,'⬇ 낮은 음 '+Math.ceil(10-el)+'초 · 가장 낮은 음까지 천천히 내려가세요'+got);
+    else hud(cur,'⬆ 높은 음 '+Math.ceil(20-el)+'초 · 가장 높은 음까지 천천히 올라가세요 (가성 OK)'+got);
+    trail.push({t:now,m:midi,c:el<10?'#5b9dff':'#c4b5fd'});
+    while(trail.length&&trail[0].t<now-8)trail.shift();
+    drawPitch(now);
+    if(el>=20){stopLoop();mode=null;finishRangeTest()}
   }else if(mode==='monitor'){
     const now=ctx.currentTime-monT0;
     if(midi!=null){
@@ -1315,6 +1401,7 @@ window.addEventListener('resize',()=>{if(!mode&&curTab!=='log')drawIdle();if(cur
 loadForm();
 drawIdle();
 renderResume();
+renderMyRange();
 </script>
 </body>
 </html>
