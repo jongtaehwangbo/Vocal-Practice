@@ -578,13 +578,23 @@ async function ensureAudio(needMic){
   if(needMic!==false&&(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia))throw new Error('이 브라우저는 마이크를 지원하지 않아요. https 주소에서 열어주세요.');
   if(!ctx)ctx=new (window.AudioContext||window.webkitAudioContext)();
   if(ctx.state==='suspended')await ctx.resume();
+  if(needMic===false&&stream)releaseMic(true);
   if(needMic!==false&&!stream){
+    try{if(navigator.audioSession)navigator.audioSession.type='play-and-record'}catch(e){}
     stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
-    const src=ctx.createMediaStreamSource(stream);
+    const src=ctx.createMediaStreamSource(stream);micSrc=src;
     analyser=ctx.createAnalyser();analyser.fftSize=2048;analyser.smoothingTimeConstant=0;
     src.connect(analyser);buf=new Float32Array(analyser.fftSize);
   }
   newMaster();
+}
+let micSrc=null;
+function releaseMic(keepCtx){
+  if(stream){try{stream.getTracks().forEach(t=>t.stop())}catch(e){}}
+  try{if(micSrc)micSrc.disconnect()}catch(e){}
+  stream=null;analyser=null;micSrc=null;
+  try{if(navigator.audioSession)navigator.audioSession.type='playback'}catch(e){}
+  if(!keepCtx&&ctx&&ctx.state==='running'){setTimeout(()=>{try{if(!mode&&!gapTimer&&!queue&&ctx.state==='running')ctx.suspend()}catch(e){}},1500)}
 }
 let comp=null;
 function volGain(){return 0.55*(+$('vol').value/100)}
@@ -669,7 +679,7 @@ $('resumeBar').addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');if(!b)return;
   if(b.dataset.act==='dismiss'){clearResume();return}
   const r=LS.get('vt_resume',null);if(!r)return;
-  stopAll();
+  stopAll(true);
   queue={items:r.items,i:r.i,label:r.label,results:r.results||[],doneKey:r.done,onDone:doneFn(r.done)};
   startItem();
   try{$('stageWrap').scrollIntoView({behavior:'smooth',block:'start'})}catch(_){}
@@ -685,7 +695,7 @@ function skipItem(){
   if(queue.i<queue.items.length-1){queue.i++;saveResume();startItem();return}
   const q=queue;
   if(q.results.length){renderSummary(false)}
-  queue=null;clearResume();setRunUI();
+  queue=null;clearResume();setRunUI();releaseMic();
   if(q.onDone)q.onDone();
 }
 $('skipBtn').onclick=()=>skipItem();
@@ -693,7 +703,7 @@ document.addEventListener('visibilitychange',()=>{
   if(document.hidden&&(mode||gapTimer))stopAll();
 });
 function startRun(items,label,doneKey){
-  stopAll();
+  stopAll(true);
   queue={items,i:0,label,results:[],doneKey,onDone:doneFn(doneKey)};
   startItem();
   try{$('stageWrap').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){}
@@ -750,7 +760,7 @@ function setRunUI(){
 }
 $('stopBtn').onclick=()=>{if(mode==='longS'&&ls&&ls.phase==='go')finishLongS();else stopAll()};
 function stopLoop(){cancelAnimationFrame(raf);raf=0}
-function stopAll(){
+function stopAll(keepMic){
   stopLoop();
   if(gapTimer){clearInterval(gapTimer);gapTimer=0}
   if(quizTimer){clearTimeout(quizTimer);quizTimer=0}
@@ -758,6 +768,7 @@ function stopAll(){
   if(master&&ctx)newMaster();
   if(mode==='monitor')saveRange();
   mode=null;queue=null;setRunUI();
+  if(!keepMic)releaseMic();
 }
 function recordNoteStats(s){
   const st=LS.get('vt_notes',{});
@@ -946,7 +957,7 @@ function finishItem(res){
     renderSummary(false);
     const q=queue;queue=null;
     if(q.items.length>1)clearResume();
-    setRunUI();
+    setRunUI();releaseMic();
     if(q.onDone)q.onDone();
   }
 }
@@ -1067,7 +1078,7 @@ $('routineBox').addEventListener('click',e=>{
 // ───── 음정 모니터 ─────
 $('startMon').onclick=async()=>{
   if(mode==='monitor'){stopAll();return}
-  stopAll();msg('');
+  stopAll(true);msg('');
   try{await ensureAudio()}catch(e){msg(e.message||'마이크 권한이 필요해요.');return}
   trail=[];hist=[];stable={m:null,n:0};
   monT0=ctx.currentTime;mode='monitor';$('summary').classList.add('hide');setRunUI();
@@ -1076,7 +1087,7 @@ $('startMon').onclick=async()=>{
 $('rangeReset').onclick=()=>{rangeLo=rangeHi=null;updateRange()};
 let rt=null;
 $('rangeTestBtn').onclick=async()=>{
-  stopAll();msg('');
+  stopAll(true);msg('');
   try{await ensureAudio()}catch(e){msg(e.message||'마이크 권한이 필요해요.');return}
   trail=[];hist=[];
   rt={t0:ctx.currentTime+1.5,lo:null,hi:null,st:{m:null,n:0}};
@@ -1091,7 +1102,7 @@ function renderMyRange(){
   $('rangeTestBtn').textContent=rg?'다시 측정하기 (20초)':'내 음역 측정하기 (20초)';
 }
 function finishRangeTest(){
-  setRunUI();
+  setRunUI();releaseMic();
   const lo=rt.lo,hi=rt.hi;
   if(lo==null||hi==null||hi-lo<5){
     $('summary').innerHTML='<label>음역 측정</label><div class="big" style="font-size:24px">측정이 잘 안 됐어요</div><div class="hint">조용한 곳에서 마이크 가까이, "아~" 소리를 0.2초 이상 끌면서 천천히 움직여 주세요. 다시 측정해 보세요.</div>';
