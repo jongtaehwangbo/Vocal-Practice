@@ -83,6 +83,7 @@ summary{color:var(--acc);font-size:14px;padding:6px 0}
   <button data-tab="monitor">음정 모니터</button>
   <button data-tab="log">기록</button>
 </nav>
+<div id="resumeBar" class="card hide" style="border-color:var(--mid)"></div>
 
 <section id="tab-train" class="card">
   <div class="grid">
@@ -141,7 +142,10 @@ summary{color:var(--acc);font-size:14px;padding:6px 0}
   <div class="hud"><div id="hudNote">—</div><div id="hudSub">마이크를 켜고 시작하세요</div></div>
   <canvas id="cv"></canvas>
   <div id="quizBox" class="hide"></div>
-  <button class="btn stop hide" id="stopBtn">■ 중지</button>
+  <div class="row" style="gap:8px">
+    <button class="btn sub hide" id="skipBtn" style="flex:1">⏭ 건너뛰기</button>
+    <button class="btn stop hide" id="stopBtn" style="flex:1">■ 중지</button>
+  </div>
   <div class="msg" id="msg"></div>
 </div>
 
@@ -196,18 +200,18 @@ const WARM={
   w1:[{n:'목 돌리기',d:'천천히 오른쪽으로 두 바퀴, 왼쪽으로 두 바퀴',s:12},
       {n:'어깨 으쓱',d:'숨을 들이마시며 어깨를 올리고, 내쉬며 툭 떨어뜨리기',s:12},
       {n:'턱 풀기',d:'손바닥으로 턱 관절을 둥글게 문지르고, 입을 크게 벌렸다 다물기',s:12},
-      {n:'립트릴',d:'입술을 "브르르" 떨며 기준음 근처에서 편하게',s:12,drone:true},
-      {n:'허밍',d:'입을 다물고 "음~". 코와 입술 주변이 간질간질 울리는지 느끼기',s:12,drone:true}],
+      {n:'립트릴',d:'입술을 "브르르" 떨며 피아노 5음을 따라 하기',s:12,guide:'five'},
+      {n:'허밍',d:'입을 다물고 "음~"으로 피아노를 따라 하기. 코와 입술 주변 울림 느끼기',s:12,guide:'five'}],
   w5:[{n:'전신 기지개',d:'두 팔을 위로 쭉 뻗고 옆구리를 양쪽으로 늘려주기',s:30},
       {n:'목 스트레칭',d:'귀를 어깨 쪽으로 천천히 기울여 양쪽 10초씩, 고개 앞뒤로 천천히',s:30},
       {n:'어깨 돌리기',d:'어깨를 크게 뒤로 다섯 바퀴, 앞으로 다섯 바퀴',s:30},
       {n:'턱 · 혀 풀기',d:'턱 마사지 후 혀를 길게 내밀었다 넣기, 혀로 입안을 둥글게 훑기',s:30},
       {n:'복식 호흡',d:'배가 부풀도록 코로 들이마시고, "스~"로 길고 고르게 내쉬기',s:48,breath:[4,8]},
-      {n:'립트릴 오르내리기',d:'"브르르"로 기준음에서 위아래로 천천히 미끄러지기',s:30,drone:true},
-      {n:'혀 트릴',d:'"르르르"로 혀끝을 떨며 편한 음으로 (어려우면 립트릴)',s:30,drone:true},
-      {n:'허밍 울림 찾기',d:'"음~"에서 "응~"으로 바꿔가며 앞쪽 울림 느끼기',s:30,drone:true},
-      {n:'"응~" 사이렌',d:'낮은 음에서 높은 음까지 사이렌처럼 부드럽게 오르내리기',s:22},
-      {n:'"마~" 소리 열기',d:'허밍에서 입을 열어 "마~"로 가볍게 소리 내기',s:20,drone:true}]
+      {n:'립트릴 오르내리기',d:'"브르르"로 피아노 소리를 따라 위아래로 미끄러지기',s:30,guide:'glide',span:7},
+      {n:'혀 트릴',d:'"르르르"로 혀끝을 떨며 피아노 5음 따라 하기 (어려우면 립트릴)',s:30,guide:'five'},
+      {n:'허밍 울림 찾기',d:'기준음에 맞춰 "음~"에서 "응~"으로 바꿔가며 앞쪽 울림 느끼기',s:30,drone:true},
+      {n:'"응~" 사이렌',d:'피아노 소리를 따라 낮은 음에서 높은 음까지 사이렌처럼 오르내리기',s:22,guide:'glide',span:12},
+      {n:'"마~" 소리 열기',d:'허밍에서 입을 열어 "마~"로 피아노 5음 따라 하기',s:20,guide:'five'}]
 };
 const EX={
   warm1:{cat:'warm',kind:'warmup',w:'w1',name:'기본 워밍업 (1분)',desc:'목 · 어깨 · 입술 · 울림을 1분 만에. 마이크는 쓰지 않아요.'},
@@ -592,9 +596,53 @@ function wood(t){
 }
 
 // ───── 실행 ─────
-function startRun(items,label,onDone){
+function doneFn(k){
+  if(!k)return null;
+  if(k.t==='daily')return ()=>{const v=LS.get('vt_daily',[]);if(!v.includes(today()))v.push(today());LS.set('vt_daily',v.slice(-400))};
+  if(k.t==='course')return ()=>{const p=LS.get('vt_course',{done:[]});if(!p.done.includes(k.day))p.done.push(k.day);LS.set('vt_course',p)};
+  return null;
+}
+function saveResume(){
+  if(!queue||queue.items.length<2)return;
+  LS.set('vt_resume',{items:queue.items,i:queue.i,label:queue.label,results:queue.results,done:queue.doneKey||null,ts:Date.now()});
+}
+function clearResume(){try{localStorage.removeItem('vt_resume')}catch(e){}renderResume()}
+function renderResume(){
+  const r=LS.get('vt_resume',null),el=$('resumeBar');
+  if(!r||!r.items||Date.now()-r.ts>12*3600e3||mode||gapTimer||queue){el.classList.add('hide');return}
+  el.innerHTML='<div class="row"><div style="flex:1;min-width:0"><b>⏯ '+esc(r.label||'루틴')+' 이어서 하기</b><div class="mute">'+(r.i+1)+' / '+r.items.length+'번째 「'+esc(cfgName(r.items[r.i]))+'」부터</div></div><button class="mini" data-act="resume" style="background:var(--acc);color:#04122b;font-weight:700">이어서</button><button class="mini" data-act="dismiss">✕</button></div>';
+  el.classList.remove('hide');
+}
+$('resumeBar').addEventListener('click',e=>{
+  const b=e.target.closest('[data-act]');if(!b)return;
+  if(b.dataset.act==='dismiss'){clearResume();return}
+  const r=LS.get('vt_resume',null);if(!r)return;
   stopAll();
-  queue={items,i:0,label,results:[],onDone};
+  queue={items:r.items,i:r.i,label:r.label,results:r.results||[],doneKey:r.done,onDone:doneFn(r.done)};
+  startItem();
+  try{$('stageWrap').scrollIntoView({behavior:'smooth',block:'start'})}catch(_){}
+});
+function skipItem(){
+  if(!queue)return;
+  stopLoop();
+  if(quizTimer){clearTimeout(quizTimer);quizTimer=0}
+  quiz=null;$('quizBox').classList.add('hide');
+  if(gapTimer){clearInterval(gapTimer);gapTimer=0}
+  if(master&&ctx)newMaster();
+  mode=null;
+  if(queue.i<queue.items.length-1){queue.i++;saveResume();startItem();return}
+  const q=queue;
+  if(q.results.length){renderSummary(false)}
+  queue=null;clearResume();setRunUI();
+  if(q.onDone)q.onDone();
+}
+$('skipBtn').onclick=()=>skipItem();
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden&&(mode||gapTimer))stopAll();
+});
+function startRun(items,label,doneKey){
+  stopAll();
+  queue={items,i:0,label,results:[],doneKey,onDone:doneFn(doneKey)};
   startItem();
   try{$('stageWrap').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){}
 }
@@ -603,6 +651,7 @@ async function startItem(){
   const c0=queue.items[queue.i],k0=EX[normEx(c0)].kind;
   try{await ensureAudio(k0!=='warmup'&&k0!=='quiz')}catch(e){msg(e.message||'마이크 권한이 필요해요.');queue=null;setRunUI();return}
   if(!queue)return;
+  saveResume();
   stopLoop();trail=[];hist=[];
   const c=queue.items[queue.i],e=EX[normEx(c)];
   $('summary').classList.add('hide');
@@ -640,6 +689,8 @@ async function startItem(){
 function setRunUI(){
   const busy=mode!=null||gapTimer!==0;
   $('stopBtn').classList.toggle('hide',!busy);
+  $('skipBtn').classList.toggle('hide',!(queue&&queue.items.length>1&&busy&&mode!=='monitor'));
+  renderResume();
   $('startTrain').disabled=busy&&mode!=='monitor';
   $('startMon').textContent=mode==='monitor'?'중지':'마이크 켜기';
   $('startMon').classList.toggle('stop',mode==='monitor');
@@ -685,9 +736,31 @@ function startWarmup(c,e){
   const steps=WARM[e.w].map(s=>{const o=Object.assign({},s,{start:t});t+=s.s;return o});
   wu={c,e,steps,total:t};
   t0=ctx.currentTime+1.5;
-  steps.forEach((s,i)=>{click(t0+s.start,i?1320:990,0.25);if(s.drone)playPad([c.start],t0+s.start+0.3,s.s-0.6)});
+  steps.forEach((s,i)=>{
+    click(t0+s.start,i?1320:990,0.25);
+    if(s.drone)playPad([c.start],t0+s.start+0.3,s.s-0.6);
+    warmGuide(s,c.start,t0+s.start);
+  });
   click(t0+t,1760,0.3);
   mode='warmup';setRunUI();raf=requestAnimationFrame(frame);
+}
+function warmGuide(s,base,ts){
+  const end=ts+s.s-0.3;
+  if(s.guide==='glide'){
+    const half=2.5,span=s.span||7;let t=ts+0.6;
+    while(t+2*half<=end){
+      playGlide(midiToHz(base),midiToHz(base+span),t,half);
+      playGlide(midiToHz(base+span),midiToHz(base),t+half,half);
+      t+=2*half+0.7;
+    }
+  }else if(s.guide==='five'){
+    const nd=0.42,offs=[0,1,2,3,2,1],len=(FIVE.length+1)*nd;let t=ts+0.6,r=0;
+    while(t+len<=end){
+      const b=base+offs[r%offs.length];
+      FIVE.forEach((x,i)=>playPiano(midiToHz(b+x),t+i*nd,(i===FIVE.length-1?2:1)*nd*0.95));
+      t+=len+0.5;r++;
+    }
+  }
 }
 function frameWarm(){
   const now=ctx.currentTime-t0,n=wu.steps.length;
@@ -712,7 +785,7 @@ function drawWarm(i,now){
   const [W,H]=fit();g.clearRect(0,0,W,H);
   const s=wu.steps[i],L=18;
   g.textAlign='left';g.textBaseline='top';
-  g.fillStyle='#8d9ab3';g.font='12px sans-serif';g.fillText((i+1)+' / '+wu.steps.length+(s.drone?'  ·  🎹 기준음이 깔려요':''),L,14);
+  g.fillStyle='#8d9ab3';g.font='12px sans-serif';g.fillText((i+1)+' / '+wu.steps.length+(s.guide==='glide'?'  ·  🎹 피아노가 오르내려요, 따라 하세요':s.guide?'  ·  🎹 피아노 5음을 따라 하세요':s.drone?'  ·  🎹 기준음이 깔려요':''),L,14);
   g.fillStyle='#e8edf7';g.font='bold 22px sans-serif';g.fillText(s.n,L,34);
   g.fillStyle='#c9d2e3';g.font='15px sans-serif';
   const yEnd=wrapText(s.d,L,72,W-2*L,22);
@@ -809,7 +882,7 @@ function finishItem(res){
   queue.results.push(res);
   const more=queue.i<queue.items.length-1;
   if(more){
-    queue.i++;gapLeft=4;
+    queue.i++;gapLeft=4;saveResume();
     renderSummary(true);
     gapTimer=setInterval(()=>{
       gapLeft--;const el=$('gapTxt');if(el)el.textContent=gapLeft;
@@ -818,7 +891,9 @@ function finishItem(res){
     setRunUI();
   }else{
     renderSummary(false);
-    const q=queue;queue=null;setRunUI();
+    const q=queue;queue=null;
+    if(q.items.length>1)clearResume();
+    setRunUI();
     if(q.onDone)q.onDone();
   }
 }
