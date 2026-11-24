@@ -397,6 +397,40 @@ const WEEKS=[
   {title:'3주차 · 현음과 리듬',bpm:78,A:[X('run5',4),X('zig3',4),X('rhythm1',4)],B:[X('trill',4),X('harm3',4),X('ch_dom7',3)]},
   {title:'4주차 · 확장과 응용',bpm:84,A:[X('longtone',3),X('run9',4),X('stack',3)],B:[X('penta',4),X('bluesriff',4),X('rhythm2',4)]}
 ];
+const DAILY_POOLS={
+  tone:['siren','vowel','nei','octave','straw','vib','no','mum','gi','la9','hum'],
+  scale:['five','minor5','triad','arp','thirds','nine','semi','arp15','blues'],
+  run:['run5','zig3','trill','penta','run9','niscale','minpenta','bluesriff'],
+  chord:Object.keys(CHORDS).map(k=>'ch_'+k),
+  ear:['quiz2','echo','quiz1','echo'],
+  rhy:['rhythm2','rhythm1']
+};
+function pickRot(pool,k,n){const out=[];for(let j=0;j<k;j++)out.push(pool[((n*k+j)%pool.length+pool.length)%pool.length]);return out}
+function dailyItems(n){
+  const P=DAILY_POOLS;
+  const R=(blk,ex,r,o)=>X(ex,r,Object.assign({bpm:(EX[ex].preset&&EX[ex].preset.bpm)||80,blk},o||{}));
+  const tr=x=>x==='siren'||x==='straw'?6:x==='mum'?8:10;
+  return [].concat(
+    [R(1,'warm5',1),R(1,'longS',1),R(1,'longS',1),R(1,'longS',1),R(1,'stacc',10,{bpm:72})],
+    [R(2,'lip',10),R(2,'longtone',10)],
+    pickRot(P.tone,4,n).map(x=>R(2,x,tr(x),x==='octave'?{dir:'updown'}:{})),
+    pickRot(P.scale,2,n).map(x=>R(2,x,10)),
+    pickRot(P.run,4,n).map(x=>R(3,x,10)),
+    pickRot(P.ear,1,n).map(x=>R(4,x,10)),
+    [R(4,'stack',6),R(4,'harm3',5,{guide:false})],
+    pickRot(P.chord,2,n).map(x=>R(4,x,5,{guide:false})),
+    pickRot(P.rhy,1,n).map(x=>R(5,x,10)),
+    [R(5,'hum',5)]
+  );
+}
+const BLK=['','몸과 호흡','발성','현음','음감과 화음','리듬과 마무리'];
+function estimateSec(items){
+  return items.reduce((s,c)=>{
+    const k=EX[normEx(c)].kind;
+    let t=k==='warmup'?WARM[EX[c.ex].w].reduce((a,x)=>a+x.s,0)+1.5:k==='longS'?45:k==='quiz'?c.rounds*6:buildSession(Object.assign({start:55},c)).total+2.5;
+    return s+t+4;
+  },0);
+}
 function courseDays(){
   const days=[];
   WEEKS.forEach((w,wi)=>{for(let k=0;k<7;k++){
@@ -411,6 +445,7 @@ const $=id=>document.getElementById(id);
 const LS={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const today=()=>new Date().toLocaleDateString('sv');
+const dayNum=()=>{const d=new Date();return Math.floor((d.getTime()-d.getTimezoneOffset()*60000)/86400000)};
 const cv=$('cv'),g=cv.getContext('2d');
 const dpr=Math.max(1,window.devicePixelRatio||1);
 let ctx=null,analyser=null,stream=null,buf=null,master=null;
@@ -831,7 +866,15 @@ $('summary').addEventListener('click',e=>{
 function renderRoutine(){
   const days=courseDays(),prog=LS.get('vt_course',{done:[]}),done=new Set(prog.done);
   const td=days.find(d=>!done.has(d.day));
-  let h='<h3>📅 4주 코스</h3>';
+  const di=dailyItems(dayNum()),doneToday=LS.get('vt_daily',[]).includes(today());
+  let h='<h3>⏱ 30분 데일리</h3>';
+  h+='<div class="mute">약 '+Math.round(estimateSec(di)/60)+'분 · 운동 '+di.length+'개 · 매일 일부 운동이 바뀌어 5일이면 앱의 모든 운동을 한 번씩 해요</div>';
+  h+='<button class="btn" data-act="daily">'+(doneToday?'✅ 오늘 완료 · 한 번 더 하기':'오늘의 30분 시작')+'</button>';
+  h+='<details><summary>오늘 할 운동 보기</summary>';
+  let lb=0;
+  di.forEach((c,i)=>{if(c.blk!==lb){lb=c.blk;h+='<div class="wk">'+lb+'. '+BLK[lb]+'</div>'}h+='<div class="drow">'+(i+1)+'. '+esc(cfgName(c))+' <span class="mute">'+cfgDetail(c)+'</span></div>'});
+  h+='</details>';
+  h+='<h3>📅 4주 코스</h3>';
   h+='<div class="row"><div>진행 <b>'+done.size+'</b> / 28일</div><div class="mute">시작음 '+noteName(getBase())+' (훈련 탭에서 변경)</div></div>';
   h+='<div class="prog"><i style="width:'+Math.round(done.size/28*100)+'%"></i></div>';
   if(td){
@@ -864,7 +907,12 @@ function renderRoutine(){
 $('routineBox').addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');if(!b)return;
   const a=b.dataset.act,i=+b.dataset.i;
-  if(a==='course'){
+  if(a==='daily'){
+    const base=getBase();
+    startRun(dailyItems(dayNum()).map(x=>Object.assign({},x,{start:base})),'30분 데일리',()=>{
+      const v=LS.get('vt_daily',[]);if(!v.includes(today()))v.push(today());LS.set('vt_daily',v.slice(-400));
+    });
+  }else if(a==='course'){
     const d=courseDays()[+b.dataset.day],base=getBase();
     startRun(d.items.map(x=>Object.assign({},x,{start:base,bpm:x.bpm||d.bpm})),(d.day+1)+'일차 코스',()=>{
       const p=LS.get('vt_course',{done:[]});if(!p.done.includes(d.day))p.done.push(d.day);LS.set('vt_course',p);
