@@ -101,6 +101,8 @@ summary{color:var(--acc);font-size:14px;padding:6px 0}
       <select id="artSel"><option value="0.95">레가토 (이어서)</option><option value="0.45">스타카토 (끊어서)</option></select></div>
     <div data-k="chord harm3"><label>가이드</label>
       <select id="guideSel"><option value="1">켜기 (내 파트도 피아노가)</option><option value="0">끄기 (혼자 찾아 부르기)</option></select></div>
+    <div class="full"><label>🎤 마이크</label>
+      <select id="micMode"><option value="on">켜기 · 음정 채점 (이어폰 추천)</option><option value="off">끄기 · 소리 크게, 채점 없이 따라 하기</option></select></div>
     <div class="full"><label>🔊 피아노 볼륨 <b id="volVal">200</b>%</label><input id="vol" type="range" min="50" max="300" step="10" value="200"></div>
     <div class="full" data-k="pattern chord glide stack harm3 echo rhythm stacc"><label>템포 <b id="bpmVal">80</b> BPM</label>
       <input id="bpm" type="range" min="50" max="140" value="80"></div>
@@ -494,7 +496,7 @@ let queue=null,gapTimer=0,gapLeft=0,env=null,ls=null,wu=null,quiz=null,quizTimer
   const s=$('keySel');
   for(let m=40;m<=72;m++){const o=new Option(noteName(m),m);if(m===55)o.selected=true;s.appendChild(o)}
 })();
-const FORM=['vol','exSel','keyMode','keySel','roundSel','dirSel','lenSel','artSel','guideSel','bpm'];
+const FORM=['micMode','vol','exSel','keyMode','keySel','roundSel','dirSel','lenSel','artSel','guideSel','bpm'];
 function saveForm(){const f={};FORM.forEach(id=>f[id]=$(id).value);LS.set('vt_form',f)}
 function loadForm(){
   const f=LS.get('vt_form',null);
@@ -574,7 +576,10 @@ function hud(a,b){$('hudNote').textContent=a;$('hudSub').textContent=b}
 function resetHud(){hud('—','마이크를 켜고 시작하세요');$('needle').style.left='50%'}
 
 // ───── 오디오 ─────
+function noMic(){return $('micMode').value==='off'}
+function setSession(t){try{if(navigator.audioSession)navigator.audioSession.type=t}catch(e){}}
 async function ensureAudio(needMic){
+  if(needMic===false)setSession('playback');
   if(needMic!==false&&(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia))throw new Error('이 브라우저는 마이크를 지원하지 않아요. https 주소에서 열어주세요.');
   if(!ctx)ctx=new (window.AudioContext||window.webkitAudioContext)();
   if(ctx.state==='suspended')await ctx.resume();
@@ -711,7 +716,11 @@ function startRun(items,label,doneKey){
 async function startItem(){
   msg('');
   const c0=queue.items[queue.i],k0=EX[normEx(c0)].kind;
-  try{await ensureAudio(k0!=='warmup'&&k0!=='quiz')}catch(e){msg(e.message||'마이크 권한이 필요해요.');queue=null;setRunUI();return}
+  if(noMic()&&k0==='longS'){
+    if(queue.items.length>1){skipItem();return}
+    msg('롱 "스" 재기는 숨 길이를 마이크로 재야 해서, 마이크를 켜야 할 수 있어요.');queue=null;setRunUI();return;
+  }
+  try{await ensureAudio(!noMic()&&k0!=='warmup'&&k0!=='quiz')}catch(e){msg(e.message||'마이크 권한이 필요해요.');queue=null;setRunUI();return}
   if(!queue)return;
   saveResume();
   stopLoop();trail=[];hist=[];
@@ -723,7 +732,7 @@ async function startItem(){
     ls={t0:ctx.currentTime,phase:'calib',floor:0.004,n:0,start:0,last:0,dur:0,cfg:c};
     mode='longS';setRunUI();raf=requestAnimationFrame(frame);return;
   }
-  sess=buildSession(c);
+  sess=buildSession(c);sess.live=!!analyser;
   if(sess.kind==='rhythm'){
     const b=sess.beat;
     t0=ctx.currentTime+0.4+4*b;
@@ -775,12 +784,15 @@ function recordNoteStats(s){
   s.notes.forEach(n=>{if(!n.score||n.to!=null)return;const k=n.midi;if(!st[k])st[k]={h:0,t:0};st[k].h+=n.hit;st[k].t+=n.total});
   LS.set('vt_notes',st);
 }
+const NOMIC_RES=c=>({name:cfgName(c),avg:null,text:'따라 하기 완료',extra:'🔇 마이크 없이 연습 모드라 채점은 없어요. 채점하려면 훈련 탭에서 마이크를 켜세요.',cfg:c,kind:'free',startName:noteName(c.start),sec:sess.total});
 function finishPitch(){
+  if(!sess.live)return finishItem(NOMIC_RES(sess.cfg));
   const c=sess.cfg,rs=sess.rounds.map(roundScore);
   recordNoteStats(sess);
   finishItem({name:cfgName(c),avg:mean(rs),rs,bases:sess.rounds.map(r=>r.label),cfg:c,kind:'pitch',startName:noteName(c.start),sec:sess.total});
 }
 function finishRhythm(){
+  if(!sess.live)return finishItem(Object.assign(NOMIC_RES(sess.cfg),{startName:sess.cfg.bpm+'bpm'}));
   const c=sess.cfg,sc=scoreRhythm(sess);
   let extra='';
   if(sc.meanErr!=null)extra='평균 타이밍 오차 ±'+sc.meanErr+'ms';
@@ -1013,6 +1025,7 @@ function renderRoutine(){
   let h=myRange()?'':'<div class="drow today" data-act="goRange" style="margin-bottom:10px">🎯 <b>내 음역을 먼저 측정하세요</b><br><span class="mute">20초면 끝나요. 모든 운동이 내 목소리에 맞는 키로 나와요 → 눌러서 측정하러 가기</span></div>';
   h+='<h3>⏱ 30분 데일리</h3>';
   h+='<div class="mute">약 '+Math.round(estimateSec(di)/60)+'분 · 운동 '+di.length+'개 · 매일 일부 운동이 바뀌어 5일이면 앱의 모든 운동을 한 번씩 해요</div>';
+  h+='<div class="row" style="margin-top:6px"><span class="mute">'+(noMic()?'🔇 마이크 없이 (소리 크게, 채점 없음)':'🎤 채점 모드 (이어폰 추천)')+'</span><button class="mini" data-act="toggleMic">'+(noMic()?'🎤 채점 켜기':'🔇 마이크 끄기')+'</button></div>';
   h+='<button class="btn" data-act="daily">'+(doneToday?'✅ 오늘 완료 · 한 번 더 하기':'오늘의 30분 시작')+'</button>';
   h+='<details><summary>오늘 할 운동 보기</summary>';
   let lb=0;
@@ -1052,6 +1065,7 @@ $('routineBox').addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');if(!b)return;
   const a=b.dataset.act,i=+b.dataset.i;
   if(a==='goRange'){d0('monitor');return}
+  if(a==='toggleMic'){$('micMode').value=noMic()?'on':'off';saveForm();renderRoutine();return}
   if(a==='daily'){
     const base=getBase();
     startRun(dailyItems(dayNum()).map(x=>Object.assign({},x,{start:base})),'30분 데일리',{t:'daily'});
@@ -1129,10 +1143,10 @@ function tgt(n,now){return n.to==null?n.midi:n.midi+(n.to-n.midi)*Math.max(0,Mat
 function frame(){
   raf=requestAnimationFrame(frame);
   if(mode==='warmup')return frameWarm();
-  analyser.getFloatTimeDomainData(buf);
+  if(analyser)analyser.getFloatTimeDomainData(buf);
   if(mode==='rhythm')return frameRhythm();
   if(mode==='longS')return frameLongS();
-  const r=detectPitch(buf,ctx.sampleRate);
+  const r=analyser?detectPitch(buf,ctx.sampleRate):null;
   let midi=null;
   if(r){hist.push(hzToMidi(r.hz));if(hist.length>3)hist.shift();midi=median(hist)}else hist.length=0;
   if(mode==='pitch'){
@@ -1146,7 +1160,7 @@ function frame(){
       }else if(n.cue&&now>=n.start&&now<=n.start+n.dur)cue=n;
     }
     const tg=active?tgt(active,now):null;
-    if(active){active.total++;if(midi!=null&&Math.abs(foldCents(midi,tg))<=active.tol)active.hit++}
+    if(active&&sess.live){active.total++;if(midi!=null&&Math.abs(foldCents(midi,tg))<=active.tol)active.hit++}
     if(!lastS){stopLoop();mode=null;setRunUI();return}
     const refN=active||next||lastS,ref=active?tg:tgt(refN,Math.max(now,refN.start));
     let c='#8d9ab3',fm=null;
@@ -1163,7 +1177,7 @@ function frame(){
     else{
       const sy=active&&active.syl?' "'+active.syl+'"':'';
       if(active&&midi!=null){const cs=Math.round(foldCents(midi,tg));hud(noteName(midi),pre+'목표 '+noteName(tg)+sy+' · '+(cs>0?'+':'')+cs+'¢ '+(Math.abs(cs)<=active.tol?'✓':cs>0?'높아요':'낮아요'))}
-      else if(active)hud('—',pre+'목표 '+noteName(tg)+sy+' · 소리를 내세요');
+      else if(active)hud(sess.live?'—':noteName(tg),pre+'목표 '+noteName(tg)+sy+(sess.live?' · 소리를 내세요':' · 따라 부르세요 🔇'));
       else hud(midi!=null?noteName(midi):'—',pre+(next?'다음 '+noteName(next.midi):'마무리'));
     }
     drawPitch(now);
@@ -1208,7 +1222,7 @@ function frame(){
   }
 }
 function frameRhythm(){
-  const now=ctx.currentTime-t0,rms=rmsOf(buf),b=sess.beat;
+  const now=ctx.currentTime-t0,rms=sess.live?rmsOf(buf):0,b=sess.beat;
   if(now<-0.25)env.floor=Math.min(0.05,env.floor*0.9+rms*0.1);
   const on=Math.max(0.02,env.floor*4),off=on*0.5;
   if(!env.loud&&rms>on&&now-env.last>0.09&&now>-0.3){env.loud=true;env.last=now;sess.onsets.push(now-0.02)}
@@ -1427,6 +1441,7 @@ $('wipe').onclick=e=>{
 
 window.addEventListener('resize',()=>{if(!mode&&curTab!=='log')drawIdle();if(curTab==='log')renderLog()});
 loadForm();
+setSession('playback');
 drawIdle();
 renderResume();
 renderMyRange();
