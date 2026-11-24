@@ -984,14 +984,10 @@ $('routineBox').addEventListener('click',e=>{
   const a=b.dataset.act,i=+b.dataset.i;
   if(a==='daily'){
     const base=getBase();
-    startRun(dailyItems(dayNum()).map(x=>Object.assign({},x,{start:base})),'30분 데일리',()=>{
-      const v=LS.get('vt_daily',[]);if(!v.includes(today()))v.push(today());LS.set('vt_daily',v.slice(-400));
-    });
+    startRun(dailyItems(dayNum()).map(x=>Object.assign({},x,{start:base})),'30분 데일리',{t:'daily'});
   }else if(a==='course'){
     const d=courseDays()[+b.dataset.day],base=getBase();
-    startRun(d.items.map(x=>Object.assign({},x,{start:base,bpm:x.bpm||d.bpm})),(d.day+1)+'일차 코스',()=>{
-      const p=LS.get('vt_course',{done:[]});if(!p.done.includes(d.day))p.done.push(d.day);LS.set('vt_course',p);
-    });
+    startRun(d.items.map(x=>Object.assign({},x,{start:base,bpm:x.bpm||d.bpm})),(d.day+1)+'일차 코스',{t:'course',day:d.day});
   }else if(a==='courseReset'){
     if(b.dataset.armed){LS.set('vt_course',{done:[]});renderRoutine()}else{b.dataset.armed=1;b.textContent='한 번 더 누르면 초기화돼요'}
   }else if(a==='runR'){
@@ -1318,6 +1314,7 @@ $('wipe').onclick=e=>{
 window.addEventListener('resize',()=>{if(!mode&&curTab!=='log')drawIdle();if(curTab==='log')renderLog()});
 loadForm();
 drawIdle();
+renderResume();
 </script>
 </body>
 </html>
